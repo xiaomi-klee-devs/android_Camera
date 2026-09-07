@@ -1,3 +1,0 @@
-com.example.mymodule
-string app_description
-string app_name
