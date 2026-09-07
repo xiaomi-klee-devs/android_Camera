@@ -58,14 +58,17 @@ object CameraZoomHooks {
     }
 
     fun injectSmoothZoom(api: XposedInterface, classLoader: ClassLoader) {
+        var zoomSetterInstalled = false
+
         // ── Step 1: Try X5.f (old ROMs — F7 etc.) ──
         if (installZoomHook(api, classLoader, "X5.f", "e0", "n0", neutralizeOldAnimators = true)) {
             api.log(Log.INFO, TAG, "[ZOOM] X5.f.e0 zoom hook installed")
             installForceZoomMaxForClass(api, runCatching { Class.forName("X5.f", false, classLoader) }.getOrNull(), classLoader)
+            zoomSetterInstalled = true
         }
 
         // ── Step 2: Try new ROM classes (F8 Ultra etc.) ──
-        if (runCatching { Class.forName("X5.f", false, classLoader) }.getOrNull() == null) {
+        if (!zoomSetterInstalled) {
             var installed = 0
             for (clsName in listOf("b8.b", "c8.D", "c8.h")) {
                 if (installZoomHook(api, classLoader, clsName, "l0", "v0", neutralizeOldAnimators = false)) {
@@ -76,16 +79,65 @@ object CameraZoomHooks {
             }
             if (installed > 0) {
                 api.log(Log.INFO, TAG, "[ZOOM] new-style zoom hook installed on $installed class(es)")
+                zoomSetterInstalled = true
             }
 
             // Hook the concrete per-lens managers too. Their l5() Range getters
             // hardcode caps (c8.a periscope = 10x, c8.e = 6x) that the base-class
             // scan above never reaches. Real runtime names (jadx renames C2451a→a,
             // C2455e→e, C2450K→K; z is already lowercase).
-            for (clsName in listOf("c8.a", "c8.e", "c8.K", "c8.z")) {
+            // NOTE: only meaningful when Step 2's base setter above actually hit —
+            // on ROMs where "c8.a"/"c8.b" etc. happen to resolve to unrelated
+            // classes (obfuscated-name collisions), skip this so it doesn't waste
+            // time or mask a Step-3 fallback below.
+            if (zoomSetterInstalled) {
+                for (clsName in listOf("c8.a", "c8.e", "c8.K", "c8.z")) {
+                    val cls = runCatching { Class.forName(clsName, false, classLoader) }.getOrNull()
+                    installForceZoomMaxForClass(api, cls, classLoader)
+                }
+            }
+        }
+
+        // ── Step 3: klee (POCO X8 Pro) MiuiCamera v6.3.005030.5 ──
+        // Different obfuscation revision: ZoomManager base is c6.b with setter
+        // c0(float,int) and getter n0() (name coincidentally matches F7's getter).
+        // Unlike F7/F8, almost every per-lens subclass here overrides at least
+        // A4() (digital-zoom Range), so we hook the whole hierarchy rather than
+        // a hardcoded short list.
+        //
+        // Gated on `!zoomSetterInstalled` (not on X5.f/b8.b class-name absence):
+        // on this ROM, unrelated classes happen to reuse the "b8.b" name without
+        // the l0(float,int) method, so a name-only guard would wrongly treat this
+        // as an F8-Ultra ROM and skip klee's real path entirely.
+        if (!zoomSetterInstalled) {
+            val kleeHierarchy = listOf(
+                "c6.b", // base ZoomManager
+                "d6.p", "d6.h", "d6.y", "d6.v", "d6.A", "d6.b", "d6.s",
+                "d6.B", "d6.c", "d6.j", "d6.u", "d6.a", "d6.F", "d6.e",
+                "d6.w", "d6.t",
+            )
+            val installedOnBase = installZoomHook(
+                api, classLoader, "c6.b", "c0", "n0",
+                neutralizeOldAnimators = false,
+            )
+            if (installedOnBase) {
+                api.log(Log.INFO, TAG, "[ZOOM] klee c6.b.c0 zoom hook installed")
+                zoomSetterInstalled = true
+            }
+            for (clsName in kleeHierarchy) {
                 val cls = runCatching { Class.forName(clsName, false, classLoader) }.getOrNull()
                 installForceZoomMaxForClass(api, cls, classLoader)
             }
+            if (installedOnBase) {
+                api.log(
+                    Log.INFO, TAG,
+                    "[ZOOM] klee-style force-zoom-max installed across ${kleeHierarchy.size} classes",
+                )
+            }
+        }
+
+        if (!zoomSetterInstalled) {
+            api.log(Log.ERROR, TAG, "[ZOOM] no zoom setter hook installed on any known class")
         }
 
         // ── Fix slider zoom-out freeze: unlock AEAF for action type 3 (slider) ──
@@ -102,6 +154,14 @@ object CameraZoomHooks {
      * to freeze.  Fix: also unlock AEAF for action type 3.
      */
     private fun hookSliderAeafUnlock(api: XposedInterface, classLoader: ClassLoader) {
+        // NOTE (klee v6.3.005030.5): "Y5.p" doesn't exist on this build — the
+        // switch-during-zoom logic was folded directly into the ZoomManager as
+        // c6.b.T6(float,float,int)Z ("onInterceptZoomingEvent" per its log tag).
+        // Unlike Y5.p.m7, T6 does NOT appear to branch on the action-type param
+        // (register p3 is immediately overwritten with the module ref before the
+        // int value is read), so the original slider-freeze bug this hook targets
+        // may simply not exist in this build. This function safely no-ops here
+        // (Class.forName fails → early return) until confirmed on-device either way.
         val pCls = runCatching { Class.forName("Y5.p", false, classLoader) }.getOrNull() ?: return
         val m7Method = pCls.declaredMethods.firstOrNull {
             it.name == "m7" && it.parameterTypes.size == 3 &&
@@ -388,7 +448,7 @@ object CameraZoomHooks {
         // NOTE: these are the REAL runtime names. jadx renames classes for
         // case-insensitive filesystems (b8.C2347b → b8.b, c8.C2450K → c8.K,
         // c8.C2455e → c8.e); Class.forName on the decompile names fails silently.
-        val f8Candidates = listOf("b8.b", "c8.K", "c8.z", "c8.e")
+        val f8Candidates = listOf("b8.b", "c8.K", "c8.z", "c8.e", "c6.b", "d6.e", "d6.F")
         var hookedV = 0
         for (clsName in f8Candidates) {
             val cls = runCatching { Class.forName(clsName, false, classLoader) }.getOrNull() ?: continue
@@ -421,22 +481,38 @@ object CameraZoomHooks {
      * by signature — doesn't depend on the obfuscated class name.
      */
     fun injectZoomButtons(api: XposedInterface, classLoader: ClassLoader) {
-        val dataCls = runCatching {
+        // F7/F8: com.android.camera.data.data.h.Q(int,boolean)
+        // klee v6.3.005030.5: com.android.camera.data.data.i.M(int,boolean)
+        //   (i.M calls i.L(mode) for the base preset array, matching Q's shape;
+        //   i.O(int,boolean) also exists but is a portrait-only filter, not this.)
+        var dataCls = runCatching {
             Class.forName("com.android.camera.data.data.h", false, classLoader)
-        }.getOrNull() ?: return
-
-        val qMethod = dataCls.declaredMethods.firstOrNull {
+        }.getOrNull()
+        var qMethod = dataCls?.declaredMethods?.firstOrNull {
             it.name == "Q" && it.parameterTypes.size == 2 &&
                 it.parameterTypes[0] == Int::class.javaPrimitiveType &&
                 it.parameterTypes[1] == Boolean::class.javaPrimitiveType &&
                 it.returnType == FloatArray::class.java
-        } ?: return
+        }
+        if (qMethod == null) {
+            dataCls = runCatching {
+                Class.forName("com.android.camera.data.data.i", false, classLoader)
+            }.getOrNull()
+            qMethod = dataCls?.declaredMethods?.firstOrNull {
+                it.name == "M" && it.parameterTypes.size == 2 &&
+                    it.parameterTypes[0] == Int::class.javaPrimitiveType &&
+                    it.parameterTypes[1] == Boolean::class.javaPrimitiveType &&
+                    it.returnType == FloatArray::class.java
+            }
+        }
+        if (dataCls == null || qMethod == null) return
+        val resolvedQMethod = qMethod
 
         val MODE_VIDEO = 162
         val MODE_PORTRAIT = 171
         val DEFAULT_PRESETS = floatArrayOf(0.6f, 1.0f, 1.5f, 2.0f, 3.0f, 5.0f, 10f, 15f)
 
-        api.hook(qMethod).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+        api.hook(resolvedQMethod).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
             .intercept(object : Hooker {
                 override fun intercept(chain: Chain): Any? {
                     val mode = chain.args[0] as Int
@@ -619,8 +695,10 @@ object CameraZoomHooks {
 
         if (neutralizeOldAnimators) {
             neutralizeZbg(api, classLoader)
-            neutralizeZoomToggle(api, classLoader)
         }
+        // FragmentZoomToggle exists (under its real class name) on both old and
+        // new ROMs including klee — only its internal method names change.
+        neutralizeZoomToggle(api, classLoader)
         // Both old and new ROMs use ZoomRatioToggleView with a pill AnimatorSet.
         // The 400ms pill glide is the visual conflict the user sees on the F8 Ultra
         // when tapping preset zoom buttons.
@@ -690,9 +768,11 @@ object CameraZoomHooks {
             return
         }
 
-        // Yh(float,float) → field "f" — pill slide animator
+        // (F,F)V → field "f" — pill slide animator.
+        // Method name differs by ROM: "Yh" (F7) vs "mi" (klee v6.3.005030.5).
+        val ffNames = listOf("Yh", "mi")
         val yh = toggleCls.declaredMethods.firstOrNull {
-            it.name == "Yh" && it.parameterTypes.size == 2 &&
+            it.name in ffNames && it.parameterTypes.size == 2 &&
                 it.parameterTypes[0] == Float::class.javaPrimitiveType &&
                 it.parameterTypes[1] == Float::class.javaPrimitiveType
         }
@@ -709,34 +789,44 @@ object CameraZoomHooks {
                         return result
                     }
                 })
-            api.log(Log.INFO, TAG, "[ZOOM] neutralized FragmentZoomToggle.Yh → field f")
+            api.log(Log.INFO, TAG, "[ZOOM] neutralized FragmentZoomToggle.${yh.name} → field f")
         } else {
-            api.log(Log.WARN, TAG, "[ZOOM] FragmentZoomToggle.Yh(float,float) NOT FOUND")
+            api.log(Log.WARN, TAG, "[ZOOM] FragmentZoomToggle (F,F)V pill-slide method NOT FOUND")
         }
 
-        // ti(float,int) → field "f13193g" (renamed from: g) — smooth ratio tween via Zb.g.i
-        val ti = toggleCls.declaredMethods.firstOrNull {
-            it.name == "ti" && it.parameterTypes.size == 2 &&
-                it.parameterTypes[0] == Float::class.javaPrimitiveType &&
-                it.parameterTypes[1] == Int::class.javaPrimitiveType
-        }
-        if (ti != null) {
+        // (F,I)V → smooth ratio tween animator field.
+        // Method name differs by ROM: "ti" (F7, field "f13193g") vs
+        // "ri" (klee v6.3.005030.5, field "g").
+        val fiCandidates = listOf("ti" to "f13193g", "ri" to "g")
+        var hookedTi = false
+        for ((methodName, fieldName) in fiCandidates) {
+            val ti = toggleCls.declaredMethods.firstOrNull {
+                it.name == methodName && it.parameterTypes.size == 2 &&
+                    it.parameterTypes[0] == Float::class.javaPrimitiveType &&
+                    it.parameterTypes[1] == Int::class.javaPrimitiveType
+            } ?: continue
+            val fieldExists = runCatching { toggleCls.getDeclaredField(fieldName) }.isSuccess
+            if (!fieldExists) continue
+
             api.hook(ti).setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
                 .intercept(object : Hooker {
                     override fun intercept(chain: Chain): Any? {
                         val result = chain.proceed()
                         runCatching {
-                            val g = toggleCls.getDeclaredField("f13193g")
+                            val g = toggleCls.getDeclaredField(fieldName)
                             g.isAccessible = true
                             (g.get(chain.thisObject) as? ValueAnimator)?.end()
-                            api.log(Log.INFO, TAG, "[ZOOM] ended FragmentZoomToggle.ti field f13193g")
+                            api.log(Log.INFO, TAG, "[ZOOM] ended FragmentZoomToggle.$methodName field $fieldName")
                         }
                         return result
                     }
                 })
-            api.log(Log.INFO, TAG, "[ZOOM] neutralized FragmentZoomToggle.ti → field f13193g")
-        } else {
-            api.log(Log.WARN, TAG, "[ZOOM] FragmentZoomToggle.ti(float,int) NOT FOUND")
+            api.log(Log.INFO, TAG, "[ZOOM] neutralized FragmentZoomToggle.$methodName → field $fieldName")
+            hookedTi = true
+            break
+        }
+        if (!hookedTi) {
+            api.log(Log.WARN, TAG, "[ZOOM] FragmentZoomToggle (F,I)V ratio-tween method NOT FOUND")
         }
     }
 
