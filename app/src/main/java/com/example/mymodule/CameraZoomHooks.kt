@@ -32,6 +32,7 @@ object CameraZoomHooks {
     private const val PREFS_NAME = "module_config"
     private const val KEY_ENABLED = "camera_zoom_smooth_enabled"
     private const val KEY_DURATION = "camera_zoom_smooth_duration"
+    private const val KEY_DURATION_OUT = "camera_zoom_smooth_duration_out"
     private const val KEY_FORCE_MAX_PHOTO = "camera_zoom_force_max_photo"
     private const val KEY_FORCE_MAX_VIDEO = "camera_zoom_force_max_video"
     private const val KEY_PRESETS_ENABLED = "zoom_presets_enabled"
@@ -979,9 +980,15 @@ object CameraZoomHooks {
         api: XposedInterface,
     ) {
         val prefs = runCatching { api.getRemotePreferences(PREFS_NAME) }.getOrNull()
+        val isZoomOut = s.target < s.current
         val durationMs = runCatching {
-            (prefs?.getFloat(KEY_DURATION, DEFAULT_DURATION_MS) ?: DEFAULT_DURATION_MS)
-                .coerceIn(50f, 800f)
+            val base = prefs?.getFloat(KEY_DURATION, DEFAULT_DURATION_MS) ?: DEFAULT_DURATION_MS
+            // Zoom-out gets its own tunable duration: native 3A/lens-switch
+            // pipeline can take longer settling one direction than the other,
+            // which no amount of client-side easing math can equalize on its
+            // own. Falls back to the base (zoom-in) duration if unset.
+            val chosen = if (isZoomOut) prefs?.getFloat(KEY_DURATION_OUT, base) ?: base else base
+            chosen.coerceIn(50f, 800f)
         }.getOrDefault(DEFAULT_DURATION_MS)
 
         val tau = durationMs * 0.6f

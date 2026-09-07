@@ -68,6 +68,7 @@ fun SettingsScreen() {
     // ── Camera Zoom ──
     var cameraZoomSmoothEnabled by remember(effectivePrefs) { mutableStateOf(effectivePrefs.getBoolean("camera_zoom_smooth_enabled", true)) }
     var cameraZoomDuration by remember(effectivePrefs) { mutableFloatStateOf(effectivePrefs.getFloat("camera_zoom_smooth_duration", 200f)) }
+    var cameraZoomDurationOut by remember(effectivePrefs) { mutableFloatStateOf(effectivePrefs.getFloat("camera_zoom_smooth_duration_out", 200f)) }
     var cameraZoomForceMaxEnabled by remember(effectivePrefs) { mutableStateOf(effectivePrefs.getFloat("camera_zoom_force_max_photo", 0f) > 0f || effectivePrefs.getFloat("camera_zoom_force_max_video", 0f) > 0f) }
     var cameraZoomForceMaxPhoto by remember(effectivePrefs) { mutableFloatStateOf(effectivePrefs.getFloat("camera_zoom_force_max_photo", 20f)) }
     var cameraZoomForceMaxVideo by remember(effectivePrefs) { mutableFloatStateOf(effectivePrefs.getFloat("camera_zoom_force_max_video", 30f)) }
@@ -155,7 +156,7 @@ fun SettingsScreen() {
                     SliderPreference(
                         value = cameraZoomDuration,
                         onValueChange = { cameraZoomDuration = it },
-                        title = "Easing duration",
+                        title = "Easing duration (zoom in)",
                         summary = "Higher = smoother but more delayed zoom",
                         valueText = "%.0f ms".format(cameraZoomDuration),
                         valueRange = 50f..500f,
@@ -166,6 +167,24 @@ fun SettingsScreen() {
                                 onReset = {
                                     cameraZoomDuration = 200f
                                     effectivePrefs.edit().putFloat("camera_zoom_smooth_duration", 200f).commit()
+                                },
+                            )
+                        },
+                    )
+                    SliderPreference(
+                        value = cameraZoomDurationOut,
+                        onValueChange = { cameraZoomDurationOut = it },
+                        title = "Easing duration (zoom out)",
+                        summary = "Separate knob — native zoom-out pipeline can settle slower than zoom-in on some ROMs, so equalize by ear",
+                        valueText = "%.0f ms".format(cameraZoomDurationOut),
+                        valueRange = 50f..500f,
+                        onValueChangeFinished = { saveFloat("camera_zoom_smooth_duration_out", cameraZoomDurationOut) },
+                        endActions = {
+                            ResetButton(
+                                enabled = cameraZoomDurationOut != 200f,
+                                onReset = {
+                                    cameraZoomDurationOut = 200f
+                                    effectivePrefs.edit().putFloat("camera_zoom_smooth_duration_out", 200f).commit()
                                 },
                             )
                         },
