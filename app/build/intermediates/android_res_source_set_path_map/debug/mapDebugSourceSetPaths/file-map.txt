@@ -1,0 +1,8 @@
+com.example.mymodule.app-pngs-0 D:\LsPosed camera mod\app\build\generated\res\pngs\debug
+com.example.mymodule.app-updated_navigation_xml-1 D:\LsPosed camera mod\app\build\generated\updated_navigation_xml\debug
+com.example.mymodule.app-packageDebugResources-2 D:\LsPosed camera mod\app\build\intermediates\incremental\debug\packageDebugResources\merged.dir
+com.example.mymodule.app-packageDebugResources-3 D:\LsPosed camera mod\app\build\intermediates\incremental\debug\packageDebugResources\stripped.dir
+com.example.mymodule.app-debug-4 D:\LsPosed camera mod\app\build\intermediates\merged_res\debug\mergeDebugResources
+com.example.mymodule.app-debug-5 D:\LsPosed camera mod\app\src\debug\res
+com.example.mymodule.app-main-6 D:\LsPosed camera mod\app\src\main\res
+gradleHome-0 C:\Users\Administrator\.gradle

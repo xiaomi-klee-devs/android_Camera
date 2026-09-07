@@ -1,0 +1,33 @@
+[versions]
+# Pinned to the exact set that MiuiX 0.9.3 is built & tested with.
+agp = "9.3.1"
+kotlin = "2.4.10"
+compose = "1.11.1"
+miuix = "0.9.3"
+libxposed = "102.0.0"
+activityCompose = "1.13.0"
+annotation = "1.9.1"
+
+[libraries]
+# Xposed framework (compile-only: it is provided at runtime by LSPosed)
+libxposed-api = { module = "io.github.libxposed:api", version.ref = "libxposed" }
+# Xposed service (bundled: the module APP uses it to write settings into the
+# LSPosed database that hooked processes read via getRemotePreferences()).
+libxposed-service = { module = "io.github.libxposed:service", version.ref = "libxposed" }
+androidx-annotation = { module = "androidx.annotation:annotation", version.ref = "annotation" }
+
+# Android host for Compose
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
+
+# Compose Multiplatform artifacts (same version MiuiX is compiled against)
+compose-ui = { module = "org.jetbrains.compose.ui:ui", version.ref = "compose" }
+compose-foundation = { module = "org.jetbrains.compose.foundation:foundation", version.ref = "compose" }
+compose-runtime = { module = "org.jetbrains.compose.runtime:runtime", version.ref = "compose" }
+
+# MiuiX - Xiaomi-style Compose UI library
+miuix-ui = { module = "top.yukonga.miuix.kmp:miuix-ui", version.ref = "miuix" }
+miuix-preference = { module = "top.yukonga.miuix.kmp:miuix-preference", version.ref = "miuix" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
